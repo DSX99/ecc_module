@@ -3,9 +3,6 @@ import random
 from fastecdsa.curve import Curve
 from fastecdsa.point import Point
 
-def inverse(a,p):
-    return pow(a,p-2,p)
-
 def point_add_affine(p1_x,p1_y,p2_x,p2_y,a,p):
     if p1_x == None:
         return p2_x,p2_y
@@ -112,7 +109,7 @@ def point_add_jacobian_montgomery(p1_x,p1_y,p1_z,p2_x,p2_y,p2_z,a,p):
     if p2_x == None:
         return p1_x,p1_y
     #here i define z=1, but for chained operations we should carry z between all operations
-    r = 1<<512
+    r = 1<<256
     
     r_not = inverse(r,p)    
     p_not = (r*r_not-1)//p
@@ -212,7 +209,7 @@ def point_add_jacobian_montgomery(p1_x,p1_y,p1_z,p2_x,p2_y,p2_z,a,p):
 def point_double_jacobian_montgomery(p1_x,p1_y,a,p):
 
     #here i define z=1, but for chained operations we should carry z between all operations
-    r = 1<<512
+    r = 1<<256
     
     p1_z = 1
     
@@ -288,104 +285,119 @@ def point_double_jacobian_montgomery(p1_x,p1_y,a,p):
 
     return p3_x,p3_y
     
-def run_testbench():
-    # p = 23               
-    # a = 1                
-    # b = 1                
-    # g_coords = (3, 10)   
-    # n = 28               
-    # h = 1                
+
+def inverse(a,p):
+    return pow(a,p-2,p)    
+
+def montgomery_ladder_step(XQP, XRP, M, YP, p):
+    """
+    Performs a single step of the Montgomery ladder based on the provided 
+    ladder state and field prime p.
+    """
     
-    # field = ec.SubGroup(p, g_coords, n, h)
-    # custom_curve = ec.Curve(a, b, field)
-
-    # print(f"Testing Curve: y^2 = x^3 + {a}x + {b} (mod {p})")
-
-    # G = custom_curve.g
-
-    # P1 = 2 * G
-    # P2 = 27 * G
-    # P_sum = P1 + P2
+    # 1. YR_bar = YP + 2 * M * XRP
+    YR_bar = (YP + 2 * M * XRP) % p
     
-    p = 0x00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFDC7
-    a = 0x00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFDC4
-    b = 0x00E8C2505DEDFC86DDC1BD0B2B6667F1DA34B82574761CB0E879BD081CFD0B6265EE3CB090F30D27614CB4574010DA90DD862EF9D4EBEE4761503190785A71C760
-    q = 0x00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF27E69532F48D89116FF22B8D4E0560609B4B38ABFAD2B85DCACDB1411F10B275
-    gx = 0x03
-    gy = 0x7503CFE87A836AE3A61B8816E25450E6CE5E1C93ACF1ABC1778064FDCBEFA921DF1626BE4FD036E93D75E6A50E3A41E98028FE5FC235F5B889A589CB5215F2A4
-    gost_512_paramA = Curve(
-        'id-tc26-gost-3410-12-512-paramSetA', 
-        p, a, b, q, gx, gy
+    # 2. E = XQP - XRP
+    E = (XQP - XRP) % p
+    
+    # 3. F = YR_bar * E
+    F = (YR_bar * E) % p
+    
+    # 4. G = E^2
+    G = pow(E, 2, p)
+    
+    # 5. XRP_prime = XRP * G
+    XRP_prime = (XRP * G) % p
+    
+    # 6. H = YR_bar^2
+    H = pow(YR_bar, 2, p)
+    
+    # 7. M_prime = M * F
+    M_prime = (M * F) % p
+    
+    # 8. YP_prime = YP * F * G
+    YP_prime = (YP * F * G) % p
+    
+    # 9. K = H + M_prime
+    K = (H + M_prime) % p
+    
+    # 10. L = K + M_prime
+    L = (K + M_prime) % p
+    
+    # 11. M_double_prime = XRP_prime - K
+    M_double_prime = (XRP_prime - K) % p
+    
+    # 12. XSP = H * L
+    XSP = (H * L) % p
+    
+    # 13. XTP = XRP_prime^2 + YP_prime
+    XTP = (pow(XRP_prime, 2, p) + YP_prime) % p
+    
+    # 14. YP_double_prime = YP_prime * H
+    YP_double_prime = (YP_prime * H) % p
+    
+    return XSP, XTP, M_double_prime, YP_double_prime
+    
+def run_testbench():    
+    p = 0x00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFD97
+    a = 0x00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFD94
+    b = 0xA6
+    m = 0x00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF6C611070995AD10045841B09B761B893
+    q = 0x00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF6C611070995AD10045841B09B761B893
+    x = 0x01
+    y = 0x008D91E471E0989CDA27DF505A453F2B7635294F2DDF23E3B122ACC99C9E9F1E14
+    
+    gost_256_paramB = Curve(
+        'id-tc26-gost-3410-2012-256-paramSetB', 
+        p, a, b, q, x, y
     )
     
-    G = gost_512_paramA.G
+    G = gost_256_paramB.G
     
-    P1 = 2 * G
-    P2 = 3 * G
+    k = random.randint(0,q-1)
+    
+    answ = k*G
+    
+    
+    for h in range(10):
+        RE = h*G
+        print(hex(RE.x))
+    
+    # k = 1<<257 + (k-1<<257)%p but first step alreadt done R=2P Q=R
+    k = (k - (1<<256))%q
+    
+    Z_sq = ((2*G.y)**2)%p
+    mZ = (3*G.x**2+a)%p
+    Xrp = ((mZ**2)-3*G.x*Z_sq)%p
+    Y = (Z_sq**2)%p
+    
+    XQP = 0
+    XRP = (Xrp)%p
+    M = (mZ)%p
+    YP = (Y)%p
+    
+    print(hex(XQP),hex(XRP),hex(M),hex(YP), bin(k))
+    
+    for i in range(256):
+        bit = (k >> (255 - i)) & 1
+        if bit == 1:
+            XQP, XRP, M, YP = montgomery_ladder_step(XQP, XRP, M, YP, p)
+        else:
+            XRP, XQP, M, YP = montgomery_ladder_step(XRP, XQP, M, YP, p)
+            
+    print(hex(XQP),hex(XRP),hex(M),hex(YP))
+            
+    numer = (2*G.y*(M**2 - XQP - XRP))%p
+    denom = (3*G.x * (YP))%p
+            
+    Z_inv = ((numer)*inverse(denom,p))%p
 
-    P_sum = P1 + P2
-    
-    x,y = point_add_jacobian_montgomery(P1.x,P1.y,1,P2.x,P2.y,1,a,p)
+    x_q = (G.x + XQP*Z_inv*Z_inv)%p
 
-    print(f"P1: ({P1.x},{P1.y})")
-    print(f"P2: ({P2.x},{P2.y})")
-    print(f"G:      ({G.x}, {G.y})")
-    print(f"P1+P2:  ({P_sum.x}, {P_sum.y})")
-    print(f"Manual:  ({x}, {y})")
-
-    assert (P_sum.x == x and P_sum.y == y), "Error"
+    print(hex(answ.x), hex(x_q))
     
-    # P_dub = P1+P1
-    
-    # x,y = point_double_jacobian_montgomery(P1.x,P1.y,a,p)
-    
-    # print(x,y,"\n",P_dub.x,P_dub.y)
-    
-    # assert (P_dub.x == x and P_dub.y == y), "error"
-    
-    # for i in range(0,100):
-    #     k = random.randint(0,22)
-    #     if k==1:
-    #         k=2
-    #     P1 = (p)*G
-    #     P2 = 1*G
-    #     P_sum = P1 + P2
-    #     try:
-    #         x,y = point_add(P1.x,P1.y,P2.x,P2.y,a,p) 
-    #     except:
-    #         print("initial data {P1.x,P1.y,P2.x,P2.y}")
-    #     assert (P_sum.x == x and P_sum.y == y), "Error " + f"P.x, P.y = {P_sum.x, P_sum.y}, func x,y = {x,y}\n" + f"initial data {P1.x,P1.y,P2.x,P2.y}"
-    
-    # print("\n Success")
-    
-    # P1 = 3 * G
-    # P_double = P1+P1
-    # x,y,z = point_double(P1.x,P1.y,1,p)
-
-    # print(hex(x),hex(y),hex(z))
-
-    # assert P_double.x == x and P_double.y == y, "error_1"
-    
-    # for i in range(0,100):
-    #     P1 = random.randint(0,q-1) * G
-    #     P_double = P1+P1
-    #     x,y = point_double(P1.x,P1.y,1,p)
-        
-    #     assert P_double.x == x and P_double.y == y, "error_2"
-
-    # print("pass")
-
-    # for i in range(0,1):
-    #     # a = random.randint(0,q-1)
-    #     a=13234157999142708889175318748010024014105001406803013569428377560594107898314166496074055604707980548768623090667151911525418456706326802356370049447627093
-    #     x,y = point_mult(G.x,G.y,p,a)
-    #     P1 = a*G
-        
-        
-    #     assert x==P1.x and y==P1.y, "error" + f"P.x, P.y = {P1.x, P1.y}, func x,y = {x,y}\n" + f"initial data {a}"
-    #     print(P1.x,P1.y)
-
-    # print(f"pass")
+    assert x_q == answ.x
 
 if __name__ == "__main__":
     run_testbench()
